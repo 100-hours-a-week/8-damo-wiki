@@ -1,4 +1,4 @@
-name: Collect Daily Scrum Comments
+name: Update Daily Scrum Discussion
 
 on:
   schedule:
@@ -7,11 +7,10 @@ on:
   workflow_dispatch: # 수동 실행 가능
 
 jobs:
-  collect-and-create-issue:
+  update-discussion:
     runs-on: ubuntu-latest
     permissions:
-      discussions: read
-      issues: write
+      discussions: write
     
     steps:
       - name: Get current date (KST)
@@ -52,15 +51,26 @@ jobs:
             }
           ' -F owner="100-hours-a-week" -F repo="8-team-name-wiki")
           
-          # 디버깅: 모든 Discussion 제목 출력
-          echo "Found discussions:"
-          echo "$DISCUSSION_DATA" | jq -r '.data.repository.discussions.nodes[].title'
-          
-          # Discussion 찾기 및 댓글 파싱
-          ISSUE_BODY=$(echo "$DISCUSSION_DATA" | jq -r --arg title "$TITLE" '
+          # Discussion ID 추출
+          DISCUSSION_ID=$(echo "$DISCUSSION_DATA" | jq -r --arg title "$TITLE" '
             .data.repository.discussions.nodes[] |
             select(.title == $title) |
-            "# Daily Scrum - " + $title + "\n\n" +
+            .id
+          ')
+          
+          if [ -z "$DISCUSSION_ID" ] || [ "$DISCUSSION_ID" == "null" ]; then
+            echo "no_discussion=true" >> $GITHUB_OUTPUT
+            echo "Warning: Discussion not found for title: $TITLE"
+            exit 0
+          fi
+          
+          echo "discussion_id=$DISCUSSION_ID" >> $GITHUB_OUTPUT
+          
+          # 댓글 파싱해서 본문 생성
+          NEW_BODY=$(echo "$DISCUSSION_DATA" | jq -r --arg title "$TITLE" '
+            .data.repository.discussions.nodes[] |
+            select(.title == $title) |
+            "# " + $title + "\n\n" +
             (
               if (.comments.nodes | length) > 0 then
                 [.comments.nodes[] | 
@@ -76,35 +86,42 @@ jobs:
                 ) |
                 join("\n\n")
               else
-                "댓글이 없습니다."
+                "아직 작성된 댓글이 없습니다."
               end
             )
           ')
           
-          # 결과가 비어있는지 확인
-          if [ -z "$ISSUE_BODY" ] || [ "$ISSUE_BODY" == "null" ]; then
-            echo "no_discussion=true" >> $GITHUB_OUTPUT
-            echo "Warning: Discussion not found for title: $TITLE"
-          else
-            echo "no_discussion=false" >> $GITHUB_OUTPUT
-            echo "Found discussion and parsed comments"
-            # 멀티라인 출력을 위한 처리
-            {
-              echo 'body<<EOF'
-              echo "$ISSUE_BODY"
-              echo 'EOF'
-            } >> $GITHUB_OUTPUT
-          fi
+          echo "no_discussion=false" >> $GITHUB_OUTPUT
           
-      - name: Create Issue
+          # 멀티라인 출력
+          {
+            echo 'body<<EOF'
+            echo "$NEW_BODY"
+            echo 'EOF'
+          } >> $GITHUB_OUTPUT
+      
+      - name: Update Discussion Body
         if: steps.collect.outputs.no_discussion == 'false'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.DISCUSSION_TOKEN }}
         run: |
-          gh issue create \
-            --repo ${{ github.repository }} \
-            --title "Daily Scrum Summary - ${{ steps.date.outputs.date }}" \
-            --body "${{ steps.collect.outputs.body }}" \
+          gh api graphql -f query='
+            mutation($discussionId: ID!, $body: String!) {
+              updateDiscussion(input: {
+                discussionId: $discussionId
+                body: $body
+              }) {
+                discussion {
+                  id
+                  url
+                }
+              }
+            }
+          ' \
+          -f discussionId="${{ steps.collect.outputs.discussion_id }}" \
+          -f body="${{ steps.collect.outputs.body }}"
+          
+          echo "Successfully updated discussion body"
       
       - name: No Discussion Found
         if: steps.collect.outputs.no_discussion == 'true'
