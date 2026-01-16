@@ -23,7 +23,7 @@ jobs:
       - name: Find Discussion and Collect Comments
         id: collect
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.DISCUSSION_TOKEN }}
         run: |
           TITLE="${{ steps.date.outputs.date }} - 데일리스크럼"
           
