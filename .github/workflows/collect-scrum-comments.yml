@@ -94,7 +94,6 @@ jobs:
             --repo ${{ github.repository }} \
             --title "Daily Scrum Summary - ${{ steps.date.outputs.date }}" \
             --body "${{ steps.collect.outputs.body }}" \
-            --label "daily-scrum"
       
       - name: No Discussion Found
         if: steps.collect.outputs.no_discussion == 'true'
